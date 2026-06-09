@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>圖書館小志工值班系統 📚</title>
+  
+  <!-- 引入 Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- 引入 React 與 ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- 引入 Babel 用於即時編譯 JSX -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- 引入 Lucide 圖示庫 -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <!-- Firebase SDK (雖然此版本主要依賴 LocalStorage，但保留結構以便未來擴充) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+    import { getFirestore, collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+    
+    // 綁定 Firebase 模組到全域，供 React 元件使用
+    window.FirebaseLib = {
+      initializeApp, getAuth, signInAnonymously, onAuthStateChanged,
+      getFirestore, collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot
+    };
+  </script>
+
+  <style>
+    /* 自訂捲軸與一些基礎動畫 */
+    .custom-scrollbar::-webkit-scrollbar { width: 8px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #fca5a5; border-radius: 10px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #f87171; }
+    
+    @keyframes pulse-soft {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.8; transform: scale(1.05); }
+    }
+    .animate-pulse-soft { animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-[#FFF0F5] to-[#FFE4E6] text-slate-700 font-sans min-h-screen">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // --- 圖示元件模擬 (安全寫法，避免 React DOM 衝突) ---
+    // 這個寫法能確保 React 在卸載元件時，不會因為找不到被 Lucide 替換掉的原始標籤而報錯
+    const Icon = ({ name, size = 24, className = "" }) => {
+      const iconRef = useRef(null);
+      
+      useEffect(() => {
+        if (iconRef.current && window.lucide) {
+          // 清空舊內容並放入新的 i 標籤，讓 React 只追蹤外層的 span
+          iconRef.current.innerHTML = `<i data-lucide="${name}"></i>`;
+          window.lucide.createIcons();
+          
+          // 手動調整替換後的 SVG 大小
+          const svg = iconRef.current.querySelector('svg');
+          if (svg) {
+            svg.setAttribute('width', size);
+            svg.setAttribute('height', size);
+          }
+        }
+      }, [name, size]);
+
+      return <span ref={iconRef} className={`inline-flex items-center justify-center ${className}`}></span>;
+    };
+
+    // --- 常數設定 ---
+    const SHIFTS = [
+      { id: 'S1', name: '早自習下課', start: '08:30', end: '08:40', duration: 10 },
+      { id: 'S2', name: '第一節下課', start: '09:20', end: '09:30', duration: 10 },
+      { id: 'S3', name: '第二節下課', start: '10:10', end: '10:30', duration: 20 },
+      { id: 'S4', name: '第三節下課', start: '11:10', end: '11:20', duration: 10 },
+      { id: 'S5', name: '第五節下課', start: '14:10', end: '14:20', duration: 10 }
+    ];
+
+    const BADGES = [
+      { min: 800, name: '圖書館之星', icon: '🌟', color: 'text-yellow-500' },
+      { min: 550, name: '閱讀守護者', icon: '🛡️', color: 'text-blue-500' },
+      { min: 300, name: '圖書館小幫手', icon: '🤝', color: 'text-green-500' },
+      { min: 100, name: '新手書蟲', icon: '🐛', color: 'text-emerald-400' },
+      { min: 0, name: '見習生', icon: '🌱', color: 'text-gray-400' }
+    ];
+
+    const INITIAL_VOLUNTEERS = [
+      { id: 'V5011', name: '王明憲', class: '501', shifts: ['S1', 'S2'], totalMinutes: 0, activeOvertimeStart: null },
+      { id: 'V5012', name: '林語彤', class: '501', shifts: ['S3'], totalMinutes: 0, activeOvertimeStart: null },
+      { id: 'V5021', name: '陳子軒', class: '502', shifts: ['S4'], totalMinutes: 0, activeOvertimeStart: null },
+      { id: 'V5022', name: '黃雅涵', class: '502', shifts: ['S5'], totalMinutes: 0, activeOvertimeStart: null },
+      { id: 'V5031', name: '張凱傑', class: '503', shifts: ['S1'], totalMinutes: 0, activeOvertimeStart: null },
+      { id: 'V5032', name: '李婉婷', class: '503', shifts: ['S2', 'S3'], totalMinutes: 0, activeOvertimeStart: null },
+      { id: 'V5041', name: '吳宇倫', class: '504', shifts: ['S4'], totalMinutes: 0, activeOvertimeStart: null },
+      { id: 'V5042', name: '蔡佳穎', class: '504', shifts: ['S5', 'S1'], totalMinutes: 0, activeOvertimeStart: null },
+      { id: 'V5051', name: '楊承翰', class: '505', shifts: ['S2'], totalMinutes: 0, activeOvertimeStart: null },
+      { id: 'V5052', name: '許家綺', class: '505', shifts: ['S3'], totalMinutes: 0, activeOvertimeStart: null },
+      { id: 'V5061', name: '鄭冠宇', class: '506', shifts: ['S4'], totalMinutes: 0, activeOvertimeStart: null },
+      { id: 'V5062', name: '謝欣儀', class: '506', shifts: ['S5'], totalMinutes: 0, activeOvertimeStart: null },
+      { id: 'V5071', name: '郭晉瑋', class: '507', shifts: ['S1', 'S3'], totalMinutes: 0, activeOvertimeStart: null },
+      { id: 'V5072', name: '曾郁雯', class: '507', shifts: ['S2', 'S4'], totalMinutes: 0, activeOvertimeStart: null }
+    ];
+
+    function App() {
+      const [currentTime, setCurrentTime] = useState(new Date());
+      const [view, setView] = useState('student'); 
+      
+      // --- 使用 LocalStorage 模擬資料庫 ---
+      const [volunteers, setVolunteers] = useState([]);
+      const [records, setRecords] = useState([]); 
+      
+      const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, message: '', onConfirm: null });
+      const [adminTab, setAdminTab] = useState('dashboard');
+      const [formData, setFormData] = useState({ name: '', class: '', shifts: [] });
+      const [editId, setEditId] = useState(null);
+      const [testShiftOverride, setTestShiftOverride] = useState(''); 
+      
+      // --- Google Sheets 連動網址設定 ---
+      // 這裡固定為您提供的預設網址
+      const [webhookUrl, setWebhookUrl] = useState('https://script.google.com/macros/s/AKfycbyzxmawgk82D-O0EVQWgLFs7FWN1DUYxykE58OXbE5MTafUZuHKqEaqfTVmHaBaCrVKNQ/exec');
+
+      // --- 系統初始化與讀取 LocalStorage ---
+      useEffect(() => {
+        const savedVols = localStorage.getItem('library_vols');
+        const savedRecs = localStorage.getItem('library_recs');
+        const savedUrl = localStorage.getItem('library_webhook_url');
+        
+        if (savedVols) {
+          setVolunteers(JSON.parse(savedVols));
+        } else {
+          setVolunteers(INITIAL_VOLUNTEERS);
+        }
+        
+        if (savedRecs) {
+          setRecords(JSON.parse(savedRecs));
+        }
+        
+        // 如果使用者有手動修改並儲存過連動網址，則覆蓋預設值
+        if (savedUrl) {
+          setWebhookUrl(savedUrl);
+        }
+      }, []);
+
+      // --- 資料變動時自動存檔到 LocalStorage ---
+      useEffect(() => {
+        if(volunteers.length > 0) {
+            localStorage.setItem('library_vols', JSON.stringify(volunteers));
+        }
+      }, [volunteers]);
+
+      useEffect(() => {
+        // 確保即使 records 為空陣列也能存入，以便執行學期重置
+        localStorage.setItem('library_recs', JSON.stringify(records));
+      }, [records]);
+
+      // --- 系統時鐘 ---
+      useEffect(() => {
+        const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+        return () => clearInterval(timer);
+      }, []);
+
+      const getCurrentDateString = () => currentTime.toISOString().split('T')[0];
+      const getCurrentTimeString = () => currentTime.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' });
+      
+      const getActiveShift = () => {
+        if (testShiftOverride) return SHIFTS.find(s => s.id === testShiftOverride);
+        const nowStr = getCurrentTimeString();
+        return SHIFTS.find(shift => nowStr >= shift.start && nowStr <= shift.end) || null;
+      };
+
+      const activeShift = getActiveShift();
+      const getBadge = (minutes) => BADGES.find(b => minutes >= b.min) || BADGES[BADGES.length - 1];
+
+      // --- 發送資料至 Google Sheets ---
+      const sendToGoogleSheet = async (volunteer, typeStr, minutes = 0) => {
+        if (!webhookUrl) return; 
+        const payload = {
+          date: getCurrentDateString(),
+          time: getCurrentTimeString(),
+          className: volunteer.class || '未知',
+          name: volunteer.name || '未知',
+          type: typeStr,
+          minutes: minutes
+        };
+        try {
+          await fetch(webhookUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify(payload)
+          });
+          console.log("已觸發 Google Sheets 寫入");
+        } catch (error) { 
+            console.error("Google Sheets 連動失敗:", error); 
+        }
+      };
+
+      // --- 打卡邏輯 ---
+      const handleClockIn = (volunteer) => {
+        if (!activeShift) return;
+        setConfirmDialog({
+          isOpen: true,
+          message: `✨ 確定要幫可愛的「${volunteer.name}」打卡嗎？`,
+          onConfirm: () => {
+            const earnedMinutes = activeShift.duration; 
+            const newRecord = {
+              id: Date.now().toString(),
+              vId: volunteer.id,
+              date: getCurrentDateString(),
+              shiftId: activeShift.id,
+              type: 'normal',
+              minutes: earnedMinutes,
+              timestamp: getCurrentTimeString()
+            };
+            setRecords(prev => [...prev, newRecord]);
+            setVolunteers(prev => prev.map(v => v.id === volunteer.id ? { ...v, totalMinutes: v.totalMinutes + earnedMinutes } : v));
+            sendToGoogleSheet(volunteer, `正常班 (${SHIFTS.find(s => s.id === activeShift.id)?.name || activeShift.id})`, earnedMinutes);
+          }
+        });
+      };
+
+      // --- 加班邏輯 ---
+      const toggleOvertime = (volunteer) => {
+        if (volunteer.activeOvertimeStart) {
+          const minutes = Math.max(1, Math.round((currentTime.getTime() - volunteer.activeOvertimeStart) / 60000));
+          setConfirmDialog({
+            isOpen: true,
+            message: `🌟 結束加班！\n「${volunteer.name}」辛苦了，本次加班共計 ${minutes} 分鐘。`,
+            onConfirm: () => {
+              const newRecord = { id: Date.now().toString(), vId: volunteer.id, date: getCurrentDateString(), shiftId: 'OVERTIME', type: 'overtime', minutes: minutes, timestamp: getCurrentTimeString() };
+              setRecords(prev => [...prev, newRecord]);
+              setVolunteers(prev => prev.map(v => v.id === volunteer.id ? { ...v, totalMinutes: v.totalMinutes + minutes, activeOvertimeStart: null } : v));
+              sendToGoogleSheet(volunteer, '加班', minutes);
+            }
+          });
+        } else {
+          setConfirmDialog({
+            isOpen: true,
+            message: `💖 要讓「${volunteer.name}」開始加班嗎？`,
+            onConfirm: () => {
+              setVolunteers(prev => prev.map(v => v.id === volunteer.id ? { ...v, activeOvertimeStart: currentTime.getTime() } : v));
+            }
+          });
+        }
+      };
+
+      const getVolunteerStatus = (volunteer) => {
+        const today = getCurrentDateString();
+        if (volunteer.activeOvertimeStart) return 'overtime';
+        if (activeShift) {
+           if (records.some(r => r.vId === volunteer.id && r.date === today && r.shiftId === activeShift.id)) return 'completed';
+        }
+        return 'pending';
+      };
+
+      // --- 畫面渲染區：前台學生畫面 ---
+      const renderStudentView = () => {
+        const currentVolunteers = activeShift ? volunteers.filter(v => (v.shifts || []).includes(activeShift.id)) : [];
+        return (
+          <div className="flex flex-col h-full bg-white/60 backdrop-blur-md rounded-[2rem] p-6 shadow-sm border-4 border-white overflow-y-auto">
+            <div className="text-center mb-8">
+              <div className="text-6xl font-black text-rose-400 tracking-wider flex justify-center items-center gap-4">
+                <Icon name="clock" size={48} className="text-rose-300" />
+                {currentTime.toLocaleTimeString('zh-TW', { hour12: false })}
+              </div>
+              <div className="mt-5 inline-block px-8 py-3 bg-white rounded-full shadow-sm text-rose-500 font-bold text-lg border-2 border-rose-100">
+                {activeShift ? (
+                  <span className="flex items-center gap-2">
+                    <span className="w-3 h-3 rounded-full bg-teal-400 animate-pulse"></span>
+                    ✨ 目前時段：{activeShift.name} ({activeShift.start} - {activeShift.end})
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-2 text-slate-400">
+                    <span className="w-3 h-3 rounded-full bg-slate-300"></span>目前非固定值班時段 💤
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {activeShift ? (
+              currentVolunteers.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {currentVolunteers.map(vol => {
+                    const status = getVolunteerStatus(vol);
+                    const badge = getBadge(vol.totalMinutes);
+                    const statusStyles = {
+                      pending: 'bg-white border-rose-100 hover:border-rose-300 hover:-translate-y-2 hover:shadow-md',
+                      completed: 'bg-teal-50 border-teal-200 opacity-90',
+                      overtime: 'bg-orange-50 border-orange-300 shadow-md hover:-translate-y-1'
+                    };
+
+                    return (
+                      <div key={vol.id} className={`p-6 rounded-[2rem] border-4 transition-all duration-300 flex flex-col shadow-sm ${statusStyles[status]}`}>
+                        <div className="flex justify-between items-start mb-4">
+                          <div>
+                            <div className="text-sm text-slate-400 font-bold bg-slate-50 inline-block px-3 py-1 rounded-full mb-2">{vol.class}</div>
+                            <div className="text-3xl font-black text-slate-700">{vol.name}</div>
+                          </div>
+                          <div className="flex flex-col items-end bg-white/50 p-2 rounded-2xl">
+                            <span className="text-3xl drop-shadow-sm" title={badge.name}>{badge.icon}</span>
+                            <span className="text-xs text-slate-500 mt-1 font-bold">{vol.totalMinutes} min</span>
+                          </div>
+                        </div>
+                        <div className="mt-auto pt-4 flex gap-2">
+                          {status === 'pending' && (
+                            <button onClick={() => handleClockIn(vol)} className="flex-1 bg-gradient-to-r from-rose-400 to-pink-400 hover:from-rose-500 text-white py-4 rounded-full font-bold text-lg flex justify-center items-center gap-2 transition-all shadow-md active:scale-95">
+                              <Icon name="check-circle" size={20} /> 點我打卡！
+                            </button>
+                          )}
+                          {status === 'completed' && (
+                            <div className="flex-1 bg-teal-100 text-teal-600 py-4 rounded-full font-bold text-lg flex justify-center items-center gap-2 cursor-not-allowed">
+                              <Icon name="check-circle" size={20} /> 完成任務 🎉
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-20 text-rose-300 font-bold text-xl flex flex-col items-center">
+                  <Icon name="heart" size={80} className="mb-4 text-rose-200" />本時段沒有排班的小志工喔！去休息一下吧～
+                </div>
+              )
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
+                <Icon name="book-open" size={120} className="mb-6 text-slate-200" />
+                <h2 className="text-3xl font-black mb-3 text-slate-500">圖書館休息中 💤</h2>
+                <p className="text-lg font-medium bg-white px-6 py-2 rounded-full shadow-sm">請等待下一個值班時段，或切換至上方「加班模式」。</p>
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      // --- 畫面渲染區：加班模式畫面 ---
+      const renderOvertimeView = () => (
+        <div className="flex flex-col h-full bg-orange-50/80 backdrop-blur-md rounded-[2rem] p-6 shadow-sm border-4 border-white overflow-y-auto">
+          <div className="text-center mb-8">
+            <h2 className="text-3xl font-black text-orange-600 flex justify-center items-center gap-3 drop-shadow-sm"><Icon name="timer" size={36} className="text-orange-500"/>特殊加班模式 🏃‍♂️</h2>
+            <p className="text-orange-500 mt-3 font-medium bg-white/60 inline-block px-6 py-2 rounded-full">點擊志工姓名即可開始或結束加班計時</p>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+            {volunteers.map(vol => {
+              const isOvertime = !!vol.activeOvertimeStart;
+              return (
+                <button key={vol.id} onClick={() => toggleOvertime(vol)} className={`p-6 rounded-[2rem] border-4 transition-all flex flex-col items-center text-center hover:-translate-y-1 active:scale-95 ${isOvertime ? 'bg-gradient-to-b from-orange-400 to-orange-500 border-orange-300 text-white shadow-md animate-pulse-soft' : 'bg-white border-orange-100 hover:border-orange-300 text-slate-700 shadow-sm'}`}>
+                  <div className={`text-sm font-bold mb-2 px-3 py-1 rounded-full ${isOvertime ? 'bg-white/20 text-white' : 'bg-slate-50 text-slate-400'}`}>{vol.class}</div>
+                  <div className="text-2xl font-black mb-4">{vol.name}</div>
+                  {isOvertime ? (
+                    <div className="flex items-center gap-2 bg-white text-orange-500 px-4 py-2 rounded-full text-sm font-bold shadow-sm"><Icon name="stop-circle" size={18}/> 結束加班</div>
+                  ) : (
+                    <div className="flex items-center gap-2 bg-orange-50 text-orange-500 px-4 py-2 rounded-full text-sm font-bold hover:bg-orange-100"><Icon name="play-circle" size={18}/> 開始加班</div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      );
+
+      // --- 畫面渲染區：後台管理畫面 ---
+      const renderAdminView = () => {
+        const sortedVols = [...volunteers].sort((a, b) => b.totalMinutes - a.totalMinutes);
+
+        const handleSaveWebhook = () => {
+          localStorage.setItem('library_webhook_url', webhookUrl);
+          setConfirmDialog({ isOpen: true, message: '🔗 Google Sheets 連動網址已儲存！', onConfirm: null });
+        };
+
+        const handleExportCSV = () => {
+          let csvContent = "日期,時間,班級,姓名,打卡類型,獲得時數(分鐘)\n";
+          const sortedRecords = [...records].sort((a, b) => b.id - a.id);
+          sortedRecords.forEach(r => {
+            const v = volunteers.find(v => v.id === r.vId);
+            const typeStr = r.type === 'overtime' ? '加班' : `正常班 (${SHIFTS.find(s => s.id === r.shiftId)?.name || r.shiftId})`;
+            csvContent += `${r.date},${r.timestamp},${v?v.class:'未知'},${v?v.name:'已刪除'},${typeStr},${r.minutes}\n`;
+          });
+          const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(blob);
+          link.download = `圖書館志工打卡紀錄_${getCurrentDateString()}.csv`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        };
+
+        const handleSaveVolunteer = () => {
+          if (!formData.name || !formData.class || formData.shifts.length === 0) return setConfirmDialog({ isOpen: true, message: '請填寫完整資訊！' });
+          if (editId) {
+            setVolunteers(prev => prev.map(v => v.id === editId ? { ...v, name: formData.name, class: formData.class, shifts: formData.shifts } : v));
+            sendToGoogleSheet({ name: formData.name, class: formData.class }, '系統：修改資料', 0);
+            setEditId(null);
+          } else {
+            const newId = 'V' + Date.now();
+            const newVol = { id: newId, ...formData, totalMinutes: 0, activeOvertimeStart: null };
+            setVolunteers(prev => [...prev, newVol]);
+            sendToGoogleSheet(newVol, '系統：新增志工', 0);
+          }
+          setFormData({ name: '', class: '', shifts: [] });
+        };
+
+        const handleDelete = (v) => {
+          setConfirmDialog({ isOpen: true, message: `確定刪除「${v.name}」？`, onConfirm: () => {
+            setVolunteers(prev => prev.filter(x => x.id !== v.id));
+            sendToGoogleSheet(v, '系統：刪除志工', 0);
+          }});
+        };
+
+        const handleReset = () => {
+          setConfirmDialog({ isOpen: true, message: `⚠️ 確定要將所有志工時數歸零，並清空紀錄嗎？`, onConfirm: () => {
+            setVolunteers(prev => prev.map(v => ({ ...v, totalMinutes: 0, activeOvertimeStart: null })));
+            setRecords([]);
+            localStorage.removeItem('library_recs'); // 確保清空 LocalStorage 中的紀錄
+            sendToGoogleSheet({ name: '系統', class: '系統' }, '系統：學期重置', 0);
+          }});
+        };
+
+        return (
+          <div className="h-full bg-white/80 backdrop-blur-md rounded-[2rem] shadow-sm p-6 border-4 border-white overflow-y-auto">
+            <div className="flex justify-between items-center border-b-2 border-rose-100 pb-4 mb-6">
+              <h2 className="text-2xl font-black text-slate-700 flex items-center gap-2"><Icon name="settings" className="text-rose-400"/> 後台管理中心</h2>
+              <div className="flex bg-rose-50 p-1.5 rounded-full border border-rose-100">
+                <button onClick={() => setAdminTab('dashboard')} className={`px-5 py-2 rounded-full font-bold ${adminTab === 'dashboard' ? 'bg-white text-rose-500 shadow-sm' : 'text-slate-500'}`}>數據儀表板</button>
+                <button onClick={() => setAdminTab('management')} className={`px-5 py-2 rounded-full font-bold ${adminTab === 'management' ? 'bg-white text-rose-500 shadow-sm' : 'text-slate-500'}`}>志工管理</button>
+              </div>
+            </div>
+
+            {adminTab === 'dashboard' ? (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div className="bg-rose-50/50 rounded-[2rem] p-6 border-2 border-rose-100">
+                  <h3 className="text-xl font-bold text-rose-900 mb-5 flex items-center gap-2"><Icon name="award" className="text-yellow-400"/> 時數排行榜 🏆</h3>
+                  <div className="space-y-3">
+                    {sortedVols.map((v, i) => (
+                      <div key={v.id} className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-rose-50">
+                        <div className="flex items-center gap-4">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black ${i<3?'bg-gradient-to-br from-yellow-200 to-yellow-400 text-white':'bg-slate-100 text-slate-400'}`}>{i+1}</div>
+                          <div>
+                            <div className="font-bold text-slate-700 text-lg">{v.name} <span className="text-sm text-slate-400 ml-1 bg-slate-50 px-2 rounded-full">{v.class}</span></div>
+                            <div className="text-sm text-slate-500 flex items-center gap-1">{getBadge(v.totalMinutes).icon} {getBadge(v.totalMinutes).name}</div>
+                          </div>
+                        </div>
+                        <div className="font-black text-rose-500 text-xl">{v.totalMinutes} <span className="text-sm text-rose-300">min</span></div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-slate-50/50 rounded-[2rem] p-6 border-2 border-slate-100">
+                    <div className="flex justify-between items-center mb-5">
+                      <h3 className="text-xl font-bold text-slate-700 flex items-center gap-2">
+                        <Icon name="calendar" className="text-sky-400" /> 系統打卡紀錄 ☁️
+                      </h3>
+                      {records.length > 0 && (
+                        <button 
+                          onClick={handleExportCSV}
+                          className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-teal-50 text-teal-600 rounded-full text-sm font-bold transition-colors shadow-sm border border-teal-100"
+                        >
+                          <Icon name="download" size={16} /> 匯出 Excel
+                        </button>
+                      )}
+                    </div>
+                    {records.length === 0 ? (
+                      <p className="text-slate-400 text-center py-10 font-medium">目前尚無打卡紀錄</p>
+                    ) : (
+                      <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+                        {[...records].sort((a, b) => b.id - a.id).map(record => {
+                          const vol = volunteers.find(v => v.id === record.vId);
+                          return (
+                            <div key={record.id} className="flex items-center justify-between bg-white p-4 rounded-2xl shadow-sm border border-slate-100 text-sm hover:shadow-md transition-shadow">
+                              <div className="flex items-center gap-4">
+                                <div className="text-slate-400 font-mono text-xs bg-slate-50 px-2 py-1 rounded-md">{record.date} {record.timestamp}</div>
+                                <div className="font-bold text-slate-700 text-base">{vol?.name || '已刪除志工'}</div>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                {record.type === 'overtime' ? (
+                                  <span className="px-3 py-1 bg-orange-100 text-orange-600 rounded-full text-xs font-bold">加班</span>
+                                ) : (
+                                  <span className="px-3 py-1 bg-teal-100 text-teal-600 rounded-full text-xs font-bold">{SHIFTS.find(s => s.id === record.shiftId)?.name || record.shiftId}</span>
+                                )}
+                                <span className="font-black text-slate-600 text-base">+{record.minutes}m</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                {/* Google Sheets 自動連動設定區塊 (完整保留) */}
+                <div className="bg-emerald-50/50 rounded-[2rem] p-6 border-2 border-emerald-100 lg:col-span-2">
+                  <h3 className="text-xl font-bold text-emerald-800 flex items-center gap-2 mb-3"><Icon name="cloud" className="text-emerald-500"/> Google Sheets 自動連動設定 🔗</h3>
+                  <p className="text-emerald-600 text-sm mb-4 font-medium">系統會在每次打卡、新增、修改或刪除志工時，自動將資料同步到下方的 Google 試算表中。</p>
+                  <div className="flex gap-3">
+                    <input type="text" value={webhookUrl} onChange={e => setWebhookUrl(e.target.value)} placeholder="請貼上以 https://script.google.com... 開頭的網址" className="flex-1 px-5 py-3 rounded-2xl border-2 border-white outline-none shadow-sm text-slate-600 font-medium" />
+                    <button onClick={handleSaveWebhook} className="px-8 py-3 bg-emerald-400 hover:bg-emerald-500 transition-colors text-white font-bold rounded-full shadow-md whitespace-nowrap">儲存網址</button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-6">
+                <div className="bg-rose-50 p-6 rounded-[2rem] border-2 border-rose-100">
+                  <h3 className="text-lg font-bold mb-5 flex items-center gap-2 text-rose-700"><Icon name={editId?'pencil':'plus'} className="text-rose-500"/> {editId?'編輯':'新增'}小志工</h3>
+                  <div className="flex flex-wrap gap-5">
+                    <div className="flex-1"><input type="text" value={formData.class} onChange={e=>setFormData({...formData,class:e.target.value})} placeholder="班級" className="w-full px-5 py-3 rounded-2xl border-2 border-white outline-none shadow-sm"/></div>
+                    <div className="flex-1"><input type="text" value={formData.name} onChange={e=>setFormData({...formData,name:e.target.value})} placeholder="姓名" className="w-full px-5 py-3 rounded-2xl border-2 border-white outline-none shadow-sm"/></div>
+                    <div className="w-full lg:w-auto flex flex-wrap gap-2 items-center">
+                      {SHIFTS.map(s => <button key={s.id} onClick={() => setFormData(p=>({...p, shifts: p.shifts.includes(s.id)?p.shifts.filter(x=>x!==s.id):[...p.shifts,s.id]}))} className={`px-4 py-2 text-sm rounded-full font-bold border-2 ${formData.shifts.includes(s.id)?'bg-rose-400 text-white border-rose-400':'bg-white text-slate-500 border-slate-100'}`}>{s.name}</button>)}
+                    </div>
+                    <button onClick={handleSaveVolunteer} className="px-8 py-3 bg-teal-400 text-white font-bold rounded-full shadow-md ml-auto">儲存</button>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-[2rem] border-2 border-slate-100 overflow-hidden shadow-sm">
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-50 border-b-2 border-slate-100 text-slate-500"><tr><th className="p-5">班級</th><th className="p-5">姓名</th><th className="p-5">負責時段</th><th className="p-5">總時數</th><th className="p-5">操作</th></tr></thead>
+                    <tbody>
+                      {volunteers.map(v => (
+                        <tr key={v.id} className="border-b border-slate-50 hover:bg-rose-50/30">
+                          <td className="p-5 font-bold text-slate-500">{v.class}</td><td className="p-5 font-black text-slate-700 text-lg">{v.name}</td>
+                          <td className="p-5 flex gap-2">{(v.shifts||[]).map(s=><span key={s} className="px-3 py-1 bg-white border text-xs rounded-full font-bold shadow-sm">{SHIFTS.find(x=>x.id===s)?.name}</span>)}</td>
+                          <td className="p-5 font-black text-teal-500">{v.totalMinutes}m</td>
+                          <td className="p-5"><div className="flex gap-2"><button onClick={()=>{setFormData(v);setEditId(v.id)}} className="p-2 text-sky-400"><Icon name="pencil" size={18}/></button><button onClick={()=>handleDelete(v)} className="p-2 text-rose-400"><Icon name="trash-2" size={18}/></button></div></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="bg-rose-50/50 rounded-[2rem] p-6 border-2 border-rose-200 mt-2">
+                  <h3 className="text-lg font-bold text-rose-800 flex items-center gap-2 mb-2"><Icon name="alert-circle" className="text-rose-500"/> 危險區域：學期重置 🔄</h3>
+                  <p className="text-rose-600 text-sm mb-5 font-medium">會將所有志工「時數歸零」，並「清空紀錄」。執行前請先匯出備份！</p>
+                  <button onClick={handleReset} className="px-6 py-3 bg-white border-2 border-rose-200 text-rose-500 font-bold rounded-full hover:bg-rose-500 hover:text-white hover:border-rose-500 transition-colors">確認執行學期重置</button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      };
+
+      return (
+        <div className="flex flex-col h-full">
+          <header className="bg-white/80 backdrop-blur-md shadow-sm border-b-4 border-white px-6 py-4 flex flex-wrap gap-4 justify-between items-center sticky top-0 z-10 m-2 sm:m-4 rounded-3xl">
+            <div className="flex items-center gap-3">
+              <div className="bg-gradient-to-br from-rose-100 to-pink-100 p-2.5 rounded-2xl shadow-inner border border-white"><Icon name="book-open" className="text-rose-500" size={28}/></div>
+              <div><h1 className="text-2xl font-black text-rose-500 flex items-center gap-2">圖書館小志工<span className="text-pink-400">值班系統</span>📚</h1></div>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <select className="text-sm bg-white border-2 border-rose-50 rounded-full px-4 py-2.5 font-bold outline-none cursor-pointer" value={testShiftOverride} onChange={e=>setTestShiftOverride(e.target.value)}>
+                <option value="">🕒 真實時間自動判斷</option>
+                {SHIFTS.map(s=><option key={s.id} value={s.id}>測試: {s.name}</option>)}
+              </select>
+              <div className="hidden lg:block h-8 w-px bg-slate-200 mx-1"></div>
+              <button onClick={()=>setView('student')} className={`px-4 py-2.5 rounded-full font-bold flex gap-2 ${view==='student'?'bg-rose-400 text-white shadow-md':'bg-white text-slate-500'}`}><Icon name="users" size={18}/>前台打卡</button>
+              <button onClick={()=>setView('overtime')} className={`px-4 py-2.5 rounded-full font-bold flex gap-2 ${view==='overtime'?'bg-orange-400 text-white shadow-md':'bg-white text-slate-500'}`}><Icon name="timer" size={18}/>加班模式</button>
+              <button onClick={()=>setView('admin')} className={`px-4 py-2.5 rounded-full font-bold flex gap-2 ${view==='admin'?'bg-indigo-400 text-white shadow-md':'bg-white text-slate-500'}`}><Icon name="settings" size={18}/>後台管理</button>
+            </div>
+          </header>
+
+          <main className="flex-1 p-2 sm:p-4 max-w-7xl w-full mx-auto h-[calc(100vh-140px)] overflow-hidden">
+            {view === 'student' && renderStudentView()}
+            {view === 'overtime' && renderOvertimeView()}
+            {view === 'admin' && renderAdminView()}
+          </main>
+
+          <footer className="w-full py-3 text-center text-sm font-bold text-rose-800/40 flex justify-center items-center gap-3">
+            <span className="flex items-center gap-1"><Icon name="sparkles" size={14}/>程式設計：鄭念慈老師</span><span className="text-rose-800/20">|</span><span>版權所有 © 2026</span>
+          </footer>
+
+          {confirmDialog.isOpen && (
+            <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+              <div className="bg-white p-8 rounded-[2rem] shadow-[0_20px_50px_rgba(0,0,0,0.1)] border-4 border-white max-w-sm w-full">
+                <div className="flex gap-3 mb-5 text-rose-400"><Icon name="alert-circle" size={28}/><h3 className="text-2xl font-black text-slate-700">小提醒</h3></div>
+                <p className="text-slate-600 mb-8 whitespace-pre-line text-lg font-bold">{confirmDialog.message}</p>
+                <div className="flex gap-3">
+                  <button onClick={()=>setConfirmDialog({isOpen:false})} className="flex-1 px-4 py-3.5 bg-slate-100 text-slate-600 rounded-full font-bold">取消</button>
+                  <button onClick={()=>{if(confirmDialog.onConfirm)confirmDialog.onConfirm();setConfirmDialog({isOpen:false});}} className="flex-1 px-4 py-3.5 bg-rose-400 text-white rounded-full font-bold shadow-md">確定</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
