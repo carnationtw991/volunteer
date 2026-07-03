@@ -1,38 +1,24 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, BookOpen, Award, Users, Settings, CheckCircle, AlertCircle, PlayCircle, StopCircle, Calendar, Plus, Trash2, Timer, Cloud, CloudOff, Pencil, Download, Sparkles, Heart, Bot, Loader2, Upload } from 'lucide-react';
+import { Clock, BookOpen, Award, Users, Settings, CheckCircle, AlertCircle, PlayCircle, StopCircle, Calendar, Plus, Trash2, Timer, Cloud, CloudOff, Pencil, Download, Sparkles, Heart, Bot, Loader2 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, updateDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 
-// --- Firebase 雲端環境設定 (支援預覽與 GitHub 雙架構) ---
+// --- Firebase 雲端環境設定 ---
 let app, auth, db, appId;
 try {
-  // 💡 [GitHub 匯出注意]：
-  // 在您的本機或 GitHub 專案中，請將以下字串替換為您的專案設定 (例如使用 process.env)
-  const envConfig = {
-    apiKey: "YOUR_API_KEY",
-    authDomain: "YOUR_AUTH_DOMAIN",
-    projectId: "YOUR_PROJECT_ID",
-    storageBucket: "YOUR_STORAGE_BUCKET",
-    messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-    appId: "YOUR_APP_ID"
-  };
-  
-  // 為了讓系統能在此預覽環境順利運行，會優先讀取平台內建設定
-  const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : envConfig;
-  appId = typeof __app_id !== 'undefined' ? __app_id : envConfig.appId;
-  
+  const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
   db = getFirestore(app);
+  appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 } catch (e) {
-  console.error("Firebase 初始化失敗:", e);
+  console.error("Firebase 初始化失敗，可能不在支援的環境中", e);
 }
 
 // --- Gemini API 整合 ---
 const callGemini = async (prompt) => {
-  // 💡 請填入您的 Gemini API Key，正式上線時建議改為環境變數
-  const apiKey = ""; // 預覽環境自動注入，GitHub請自行填寫
+  const apiKey = ""; // The execution environment provides the key at runtime
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
 
   let retries = 5;
@@ -61,11 +47,11 @@ const callGemini = async (prompt) => {
 
 // --- 常數設定 ---
 const SHIFTS = [
-  { id: 'S0', name: '早自習下課', start: '08:30', end: '08:40', duration: 10 },
-  { id: 'S1', name: '第一節下課', start: '09:20', end: '09:30', duration: 10 },
-  { id: 'S2', name: '第二節下課', start: '10:10', end: '10:25', duration: 15 },
-  { id: 'S3', name: '第三節下課', start: '11:05', end: '11:15', duration: 10 },
-  { id: 'S5', name: '第五節下課', start: '14:00', end: '14:10', duration: 10 }
+  { id: 'S1', name: '早自習下課', start: '08:30', end: '08:40', duration: 10 },
+  { id: 'S2', name: '第一節下課', start: '09:20', end: '09:30', duration: 10 },
+  { id: 'S3', name: '第二節下課', start: '10:10', end: '10:30', duration: 20 },
+  { id: 'S4', name: '第三節下課', start: '11:10', end: '11:20', duration: 10 },
+  { id: 'S5', name: '第五節下課', start: '14:10', end: '14:20', duration: 10 }
 ];
 
 const BADGES = [
@@ -78,20 +64,20 @@ const BADGES = [
 
 // --- 預設初始資料 (僅在資料庫為空時匯入) ---
 const INITIAL_VOLUNTEERS = [
-  { id: 'V5011', name: '王明憲', class: '501', shifts: ['S2'], totalMinutes: 0, activeOvertimeStart: null },
+  { id: 'V5011', name: '王明憲', class: '501', shifts: ['S1', 'S2'], totalMinutes: 0, activeOvertimeStart: null },
   { id: 'V5012', name: '林語彤', class: '501', shifts: ['S3'], totalMinutes: 0, activeOvertimeStart: null },
-  { id: 'V5021', name: '陳子軒', class: '502', shifts: ['S2'], totalMinutes: 0, activeOvertimeStart: null },
+  { id: 'V5021', name: '陳子軒', class: '502', shifts: ['S4'], totalMinutes: 0, activeOvertimeStart: null },
   { id: 'V5022', name: '黃雅涵', class: '502', shifts: ['S5'], totalMinutes: 0, activeOvertimeStart: null },
-  { id: 'V5031', name: '張凱傑', class: '503', shifts: ['S2'], totalMinutes: 0, activeOvertimeStart: null },
+  { id: 'V5031', name: '張凱傑', class: '503', shifts: ['S1'], totalMinutes: 0, activeOvertimeStart: null },
   { id: 'V5032', name: '李婉婷', class: '503', shifts: ['S2', 'S3'], totalMinutes: 0, activeOvertimeStart: null },
-  { id: 'V5041', name: '吳宇倫', class: '504', shifts: ['S3'], totalMinutes: 0, activeOvertimeStart: null },
-  { id: 'V5042', name: '蔡佳穎', class: '504', shifts: ['S5'], totalMinutes: 0, activeOvertimeStart: null },
+  { id: 'V5041', name: '吳宇倫', class: '504', shifts: ['S4'], totalMinutes: 0, activeOvertimeStart: null },
+  { id: 'V5042', name: '蔡佳穎', class: '504', shifts: ['S5', 'S1'], totalMinutes: 0, activeOvertimeStart: null },
   { id: 'V5051', name: '楊承翰', class: '505', shifts: ['S2'], totalMinutes: 0, activeOvertimeStart: null },
   { id: 'V5052', name: '許家綺', class: '505', shifts: ['S3'], totalMinutes: 0, activeOvertimeStart: null },
-  { id: 'V5061', name: '鄭冠宇', class: '506', shifts: ['S5'], totalMinutes: 0, activeOvertimeStart: null },
+  { id: 'V5061', name: '鄭冠宇', class: '506', shifts: ['S4'], totalMinutes: 0, activeOvertimeStart: null },
   { id: 'V5062', name: '謝欣儀', class: '506', shifts: ['S5'], totalMinutes: 0, activeOvertimeStart: null },
-  { id: 'V5071', name: '郭晉瑋', class: '507', shifts: ['S3'], totalMinutes: 0, activeOvertimeStart: null },
-  { id: 'V5072', name: '曾郁雯', class: '507', shifts: ['S2'], totalMinutes: 0, activeOvertimeStart: null }
+  { id: 'V5071', name: '郭晉瑋', class: '507', shifts: ['S1', 'S3'], totalMinutes: 0, activeOvertimeStart: null },
+  { id: 'V5072', name: '曾郁雯', class: '507', shifts: ['S2', 'S4'], totalMinutes: 0, activeOvertimeStart: null }
 ];
 
 export default function App() {
@@ -106,17 +92,17 @@ export default function App() {
   
   // 介面與控制狀態
   const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, message: '', onConfirm: null });
-  const [aiDialog, setAiDialog] = useState({ isOpen: false, title: '', content: '', isLoading: false }); 
+  const [aiDialog, setAiDialog] = useState({ isOpen: false, title: '', content: '', isLoading: false }); // AI 對話框狀態
   const [adminTab, setAdminTab] = useState('dashboard');
   
   // 新增與編輯表單狀態
   const [formData, setFormData] = useState({ name: '', class: '', shifts: [] });
   const [editId, setEditId] = useState(null);
+  
   const [testShiftOverride, setTestShiftOverride] = useState(''); 
 
-  // Google Sheets Webhook 網址狀態
+  // 新增：Google Sheets Webhook 網址狀態 (內建預設網址，並可從瀏覽器本地端讀取)
   const [webhookUrl, setWebhookUrl] = useState('https://script.google.com/macros/s/AKfycbyzxmawgk82D-O0EVQWgLFs7FWN1DUYxykE58OXbE5MTafUZuHKqEaqfTVmHaBaCrVKNQ/exec');
-  
   useEffect(() => {
     const savedUrl = localStorage.getItem('library_webhook_url');
     if (savedUrl) setWebhookUrl(savedUrl);
@@ -148,7 +134,6 @@ export default function App() {
   }, []);
 
   // --- 2. 雲端資料即時同步 ---
-  // 💡 [GitHub 匯出注意]：本機專案請將 'artifacts', appId, 'public', 'data' 的路徑結構簡化為單純的 'volunteers' 集合
   useEffect(() => {
     if (!user || !db) return;
     setIsCloudSyncing(true);
@@ -190,9 +175,9 @@ export default function App() {
   const activeShift = getActiveShift();
   const getBadge = (minutes) => BADGES.find(b => minutes >= b.min) || BADGES[BADGES.length - 1];
 
-  // --- 發送資料至 Google Sheets ---
+  // --- 新增：發送資料至 Google Sheets ---
   const sendToGoogleSheet = async (volunteer, typeStr, minutes = 0) => {
-    if (!webhookUrl) return; 
+    if (!webhookUrl) return; // 如果沒有設定網址就不執行
     
     const payload = {
       date: getCurrentDateString(),
@@ -204,6 +189,7 @@ export default function App() {
     };
 
     try {
+      // 改用 text/plain 避免瀏覽器 CORS 阻擋 request body
       await fetch(webhookUrl, {
         method: 'POST',
         mode: 'no-cors',
@@ -244,6 +230,7 @@ export default function App() {
             totalMinutes: volunteer.totalMinutes + earnedMinutes 
           });
           
+          // 觸發寫入 Google Sheets
           sendToGoogleSheet(volunteer, `正常班 (${SHIFTS.find(s => s.id === activeShift.id)?.name || activeShift.id})`, earnedMinutes);
           
         } catch (error) {
@@ -286,7 +273,9 @@ export default function App() {
               activeOvertimeStart: null
             });
             
+            // 觸發寫入 Google Sheets
             sendToGoogleSheet(volunteer, '加班', minutes);
+
           } catch (error) {
             console.error("加班紀錄寫入雲端失敗:", error);
           }
@@ -318,6 +307,44 @@ export default function App() {
        if (hasClockedIn) return 'completed';
     }
     return 'pending';
+  };
+
+  // --- Gemini AI 功能 ---
+  const handleGetAIEncouragement = async (volunteer) => {
+    const badge = getBadge(volunteer.totalMinutes);
+    setAiDialog({ 
+      isOpen: true, 
+      title: `✨ 給 ${volunteer.name} 的 AI 魔法鼓勵 ✨`, 
+      content: '', 
+      isLoading: true 
+    });
+    
+    const prompt = `請用極度可愛、充滿活力的國小生語氣（大約30-50字），加上許多表情符號，給圖書館小志工「${volunteer.name}」一段專屬的鼓勵！
+他目前累積了 ${volunteer.totalMinutes} 分鐘的服務時數，獲得的徽章等級是「${badge.name}」。
+如果時數很低或為0，請鼓勵他有個好的開始；如果時數很高，請大力稱讚他的貢獻！直接輸出鼓勵的話即可。`;
+    
+    const text = await callGemini(prompt);
+    setAiDialog(prev => ({ ...prev, content: text, isLoading: false }));
+  };
+
+  const handleAIAnalysis = async () => {
+    setAiDialog({ 
+      isOpen: true, 
+      title: `🤖 AI 助理：志工經營洞察與建議`, 
+      content: '', 
+      isLoading: true 
+    });
+    
+    const topVols = [...volunteers].sort((a,b)=>b.totalMinutes - a.totalMinutes).slice(0, 3).map(v => `${v.name}(${v.totalMinutes}分)`).join('、');
+    const prompt = `你是一位專業且溫柔的國小圖書館老師助理。請根據以下系統現有資料，給老師一段約150-200字的精要總結與鼓勵。
+資料摘要：
+- 志工總人數：${volunteers.length}人
+- 總打卡紀錄數：${records.length}筆
+- 目前表現最亮眼的前三名：${topVols || '尚無資料'}
+請用溫暖的語氣，總結志工們的整體參與狀況，並給予老師一兩項具體且有創意的「管理或獎勵小建議」（例如舉辦圖書館小茶會、神秘抽獎等）。段落清晰，適當加入Emoji。直接輸出建議即可。`;
+    
+    const text = await callGemini(prompt);
+    setAiDialog(prev => ({ ...prev, content: text, isLoading: false }));
   };
 
   // --- UI 元件：前台學生畫面 ---
@@ -363,6 +390,15 @@ export default function App() {
 
                 return (
                   <div key={vol.id} className={`p-6 rounded-[2rem] border-4 transition-all duration-300 flex flex-col shadow-sm relative ${statusStyles[status]}`}>
+                    {/* AI 鼓勵按鈕 */}
+                    <button 
+                      onClick={() => handleGetAIEncouragement(vol)}
+                      className="absolute top-4 right-4 bg-gradient-to-br from-fuchsia-100 to-purple-100 hover:from-fuchsia-200 hover:to-purple-200 text-fuchsia-600 p-2 rounded-full shadow-sm transition-transform hover:scale-110"
+                      title="領取專屬 AI 魔法鼓勵"
+                    >
+                      <Sparkles size={20} />
+                    </button>
+
                     <div className="flex justify-between items-start mb-4 pr-10">
                       <div>
                         <div className="text-sm text-slate-400 font-bold bg-slate-50 inline-block px-3 py-1 rounded-full mb-2">{vol.class}</div>
@@ -504,6 +540,7 @@ export default function App() {
             class: formData.class,
             shifts: formData.shifts
           });
+          // 觸發寫入 Google Sheets (修改)
           sendToGoogleSheet({ name: formData.name, class: formData.class }, '系統：修改資料', 0);
           setFormData({ name: '', class: '', shifts: [] });
           setEditId(null);
@@ -515,6 +552,7 @@ export default function App() {
         const newVolunteer = { id: newId, ...formData, totalMinutes: 0, activeOvertimeStart: null };
         try {
           await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'volunteers', newId), newVolunteer);
+          // 觸發寫入 Google Sheets (新增)
           sendToGoogleSheet(newVolunteer, '系統：新增志工', 0);
           setFormData({ name: '', class: '', shifts: [] });
         } catch (error) {
@@ -541,6 +579,7 @@ export default function App() {
         onConfirm: async () => {
           try {
             await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'volunteers', vol.id));
+            // 觸發寫入 Google Sheets (刪除)
             sendToGoogleSheet(vol, '系統：刪除志工', 0);
           } catch (error) {
              console.error("刪除志工失敗:", error);
@@ -558,59 +597,14 @@ export default function App() {
       }));
     };
 
-    // --- 匯出/匯入志工人員設定 ---
-    const handleExportVolunteers = () => {
-      const dataStr = JSON.stringify(volunteers, null, 2);
-      const blob = new Blob([dataStr], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `志工人員設定備份_${getCurrentDateString()}.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    };
-
-    const handleImportVolunteers = (event) => {
-      const file = event.target.files[0];
-      if (!file) return;
-
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        try {
-          const importedData = JSON.parse(e.target.result);
-          if (!Array.isArray(importedData)) throw new Error("資料格式不正確");
-
-          setConfirmDialog({
-            isOpen: true,
-            message: `🔄 確定要匯入 ${importedData.length} 筆志工資料嗎？\n(將會自動寫入雲端，若ID相同則會覆蓋現有資料)`,
-            onConfirm: async () => {
-              try {
-                const promises = importedData.map(vol => {
-                  const id = vol.id || ('V' + String(Date.now()).slice(-4) + Math.floor(Math.random() * 1000));
-                  return setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'volunteers', id), { ...vol, id });
-                });
-                await Promise.all(promises);
-              } catch(err) {
-                console.error("匯入失敗:", err);
-              }
-            }
-          });
-        } catch (error) {
-          setConfirmDialog({ isOpen: true, message: '❌ 讀取失敗，請確認檔案是否為正確的 JSON 備份檔！', onConfirm: null });
-        }
-      };
-      reader.readAsText(file);
-      event.target.value = ''; 
-    };
-
-    // --- 一鍵學期重置功能 ---
+    // --- 新增：一鍵學期重置功能 ---
     const handleResetSystem = () => {
       setConfirmDialog({
         isOpen: true,
         message: `⚠️ 嚴重警告：學期重置！\n\n確定要將所有志工的時數「歸零」，並「清空」所有打卡紀錄嗎？\n(強烈建議先點擊「匯出 Excel」備份)\n\n此操作完全無法復原喔！🔄`,
         onConfirm: async () => {
           try {
+            // 1. 將所有志工時數歸零、清除加班狀態
             const volPromises = volunteers.map(vol => 
               updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'volunteers', vol.id), {
                 totalMinutes: 0,
@@ -619,12 +613,15 @@ export default function App() {
             );
             await Promise.all(volPromises);
 
+            // 2. 清空所有打卡紀錄
             const recPromises = records.map(rec => 
               deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'records', rec.id))
             );
             await Promise.all(recPromises);
 
+            // 3. 紀錄重置動作至 Google Sheets
             sendToGoogleSheet({ name: '系統執行', class: '系統' }, '系統：學期重置歸零', 0);
+
           } catch (error) {
             console.error("系統重置失敗:", error);
           }
@@ -662,6 +659,14 @@ export default function App() {
                 <h3 className="text-xl font-bold text-rose-900 flex items-center gap-2">
                   <Award className="text-yellow-400" /> 服務時數排行榜 🏆
                 </h3>
+                {volunteers.length > 0 && (
+                  <button 
+                    onClick={handleAIAnalysis}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-100 to-fuchsia-100 hover:from-purple-200 hover:to-fuchsia-200 text-fuchsia-700 rounded-full text-sm font-bold transition-transform hover:scale-105 shadow-sm border border-fuchsia-200"
+                  >
+                    <Bot size={16} /> ✨ AI 分析
+                  </button>
+                )}
               </div>
               <div className="space-y-3">
                 {sortedVolunteers.map((vol, index) => {
@@ -755,26 +760,6 @@ export default function App() {
           </div>
         ) : (
           <div className="flex flex-col gap-6">
-            
-            {/* 匯入匯出工具列 */}
-            <div className="flex flex-wrap items-center justify-between gap-4 bg-indigo-50/50 p-4 rounded-2xl border border-indigo-100">
-              <div className="text-indigo-700 font-bold text-sm flex items-center gap-2">
-                <Settings size={18} /> 人員設定備份與還原
-              </div>
-              <div className="flex gap-3">
-                <button 
-                  onClick={handleExportVolunteers}
-                  className="flex items-center gap-2 px-4 py-2 bg-white text-indigo-600 hover:bg-indigo-100 rounded-full text-sm font-bold shadow-sm transition-colors border border-indigo-200"
-                >
-                  <Download size={16} /> 匯出名單
-                </button>
-                <label className="flex items-center gap-2 px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-full text-sm font-bold shadow-sm transition-colors cursor-pointer active:scale-95">
-                  <Upload size={16} /> 匯入名單
-                  <input type="file" accept=".json" onChange={handleImportVolunteers} className="hidden" />
-                </label>
-              </div>
-            </div>
-
             {/* 新增/編輯志工表單 */}
             <div className={`${editId ? 'bg-sky-50 border-sky-100' : 'bg-rose-50 border-rose-100'} p-6 rounded-[2rem] border-2 transition-colors`}>
               <h3 className={`text-lg font-bold mb-5 flex items-center gap-2 ${editId ? 'text-sky-700' : 'text-rose-700'}`}>
@@ -814,9 +799,9 @@ export default function App() {
             </div>
 
             {/* 志工列表 */}
-            <div className="bg-white rounded-[2rem] border-2 border-slate-100 overflow-x-auto flex-1 shadow-sm">
-              <table className="w-full text-left border-collapse min-w-[600px]">
-                <thead className="bg-slate-50 border-b-2 border-slate-100 text-slate-500 whitespace-nowrap">
+            <div className="bg-white rounded-[2rem] border-2 border-slate-100 overflow-hidden flex-1 shadow-sm">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-slate-50 border-b-2 border-slate-100 text-slate-500">
                   <tr>
                     <th className="p-5 font-bold">班級</th>
                     <th className="p-5 font-bold">姓名</th>
@@ -896,7 +881,7 @@ export default function App() {
               {isCloudSyncing ? (
                 <><Cloud size={14} className="text-teal-400" /><span className="text-teal-500">雲端同步已開啟</span></>
               ) : (
-                <><CloudOff size={14} className="text-slate-300" /><span className="text-slate-400">連線中...</span></>
+                <><CloudOff size={14} className="text-slate-400" /><span className="text-slate-500">本機模式 (已儲存於平板/電腦)</span></>
               )}
             </div>
           </div>
